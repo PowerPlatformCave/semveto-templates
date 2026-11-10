@@ -8,6 +8,8 @@ Este repositorio es público y contiene **solo** lo que un tercero necesita para
 
 | Ruta | Qué es |
 |---|---|
+| `templates/` | La plantilla del botón (`azuredeploy.json`) y su formulario (`createUiDefinition.json`). |
+| `GUIA_DESPLIEGUE.md` | Qué crea el botón, cómo desplegarlo y cómo quitarlo todo. |
 | `tools/semveto_verify.py` | El verificador de los sellos diarios. Solo usa la biblioteca estándar de Python. |
 | `GUIA_VERIFICACION.md` | Cómo comprobar un sello diario frente a una copia del registro. |
 | `.github/workflows/secret-scan.yml` | La revisión automática de cada cambio: un detector estándar de secretos y los patrones genéricos. Si encuentra algo, el cambio no entra. |
@@ -23,14 +25,22 @@ El manifiesto no lleva saldos, cifras ni textos. Se sella con [OpenTimestamps](h
 
 ## Despliegue en otra suscripción de Azure
 
-El botón «Deploy to Azure» está **en preparación**. Una versión de la plantilla solo se publica después de desplegarla en una suscripción de pruebas vacía. Entre otras cosas, esa prueba comprueba que una configuración que apunte a producción se niega a arrancar.
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FPowerPlatformCave%2Fsemveto-templates%2Fmain%2Ftemplates%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FPowerPlatformCave%2Fsemveto-templates%2Fmain%2Ftemplates%2FcreateUiDefinition.json)
 
-Lo que hará el botón:
-- crear un grupo de recursos nuevo, con nombres derivados del propio grupo;
-- usar las cuentas demo y la aplicación de cTrader de quien despliega;
-- mandar los avisos a su propio correo.
+**Versión 0: solo la infraestructura de una réplica,** en un grupo de recursos nuevo de quien despliega:
+- máquina virtual sin reglas de entrada;
+- Key Vault;
+- almacenamiento con los contenedores del estudio;
+- Log Analytics y un aviso por correo;
+- una cuenta de AI Services con los dos modelos del estudio, en las mismas versiones y sin actualización automática.
 
-La plantilla no aceptará ningún identificador de un recurso existente.
+El código del motor, las cuentas demo y el arranque de los servicios llegarán en una versión posterior. Pasos y desmontaje: [`GUIA_DESPLIEGUE.md`](GUIA_DESPLIEGUE.md).
+
+**Lo que la plantilla garantiza:**
+- no acepta ningún identificador de un recurso existente;
+- `environment` solo admite `replica`;
+- sus avisos van al correo del formulario;
+- cada versión se prueba en un grupo vacío y se desmonta entera antes de publicarse.
 
 ## Revisión automática
 

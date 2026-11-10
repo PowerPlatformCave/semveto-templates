@@ -1,0 +1,512 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.37.4.10188",
+      "templateHash": "15748292995678484386"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Region of every resource (the group's by default)."
+      }
+    },
+    "environment": {
+      "type": "string",
+      "defaultValue": "replica",
+      "allowedValues": [
+        "replica"
+      ],
+      "metadata": {
+        "description": "Only \"replica\": this template never deploys production."
+      }
+    },
+    "alertEmail": {
+      "type": "string",
+      "metadata": {
+        "description": "E-mail that receives the alert when the VM is not available."
+      }
+    },
+    "adminPublicKey": {
+      "type": "string",
+      "metadata": {
+        "description": "SSH public key of the VM's administrator. No inbound rule is opened: administration by Run Command."
+      }
+    },
+    "vmSize": {
+      "type": "string",
+      "defaultValue": "Standard_D2as_v6",
+      "metadata": {
+        "description": "Size of the VM."
+      }
+    },
+    "ledgerRetentionDays": {
+      "type": "int",
+      "defaultValue": 1095,
+      "minValue": 1,
+      "metadata": {
+        "description": "Retention of the ledger container in days (time-based, created unlocked: it can still be removed)."
+      }
+    },
+    "modelCapacity": {
+      "type": "int",
+      "defaultValue": 50,
+      "minValue": 1,
+      "metadata": {
+        "description": "Capacity of each model deployment, in thousands of tokens per minute."
+      }
+    }
+  },
+  "variables": {
+    "u": "[uniqueString(resourceGroup().id)]",
+    "tags": {
+      "project": "semveto-replica",
+      "environment": "[parameters('environment')]"
+    },
+    "vmName": "[format('vm-sv-{0}', variables('u'))]",
+    "vaultName": "[format('kv-sv-{0}', variables('u'))]",
+    "storageName": "[format('stsv{0}', variables('u'))]",
+    "aiName": "[format('ai-sv-{0}', variables('u'))]",
+    "roles": {
+      "blobContributor": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+      "vaultUser": "4633458b-17de-408a-b874-0445c86b69e6",
+      "openAiUser": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd"
+    },
+    "cloudInit": "#cloud-config\npackage_update: true\npackages: [git, python3-venv, jq]\nruncmd:\n  - [sh, -c, \"mkdir -p /var/lib/semveto-replica && date -u +%Y-%m-%dT%H:%M:%SZ > /var/lib/semveto-replica/ready\"]\n"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/networkSecurityGroups",
+      "apiVersion": "2024-05-01",
+      "name": "[format('nsg-sv-{0}', variables('u'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "securityRules": []
+      }
+    },
+    {
+      "type": "Microsoft.Network/virtualNetworks",
+      "apiVersion": "2024-05-01",
+      "name": "[format('vnet-sv-{0}', variables('u'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "addressSpace": {
+          "addressPrefixes": [
+            "10.70.0.0/24"
+          ]
+        },
+        "subnets": [
+          {
+            "name": "default",
+            "properties": {
+              "addressPrefix": "10.70.0.0/26",
+              "networkSecurityGroup": {
+                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', format('nsg-sv-{0}', variables('u')))]"
+              }
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkSecurityGroups', format('nsg-sv-{0}', variables('u')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/publicIPAddresses",
+      "apiVersion": "2024-05-01",
+      "name": "[format('ip-sv-{0}', variables('u'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "Standard"
+      },
+      "properties": {
+        "publicIPAllocationMethod": "Static"
+      }
+    },
+    {
+      "type": "Microsoft.Network/networkInterfaces",
+      "apiVersion": "2024-05-01",
+      "name": "[format('nic-sv-{0}', variables('u'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "ipConfigurations": [
+          {
+            "name": "ipconfig1",
+            "properties": {
+              "privateIPAllocationMethod": "Dynamic",
+              "subnet": {
+                "id": "[reference(resourceId('Microsoft.Network/virtualNetworks', format('vnet-sv-{0}', variables('u'))), '2024-05-01').subnets[0].id]"
+              },
+              "publicIPAddress": {
+                "id": "[resourceId('Microsoft.Network/publicIPAddresses', format('ip-sv-{0}', variables('u')))]"
+              }
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/publicIPAddresses', format('ip-sv-{0}', variables('u')))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', format('vnet-sv-{0}', variables('u')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Compute/virtualMachines",
+      "apiVersion": "2024-07-01",
+      "name": "[variables('vmName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "hardwareProfile": {
+          "vmSize": "[parameters('vmSize')]"
+        },
+        "securityProfile": {
+          "securityType": "TrustedLaunch",
+          "uefiSettings": {
+            "secureBootEnabled": true,
+            "vTpmEnabled": true
+          }
+        },
+        "storageProfile": {
+          "diskControllerType": "NVMe",
+          "imageReference": {
+            "publisher": "Canonical",
+            "offer": "ubuntu-24_04-lts",
+            "sku": "server",
+            "version": "latest"
+          },
+          "osDisk": {
+            "name": "[format('osdisk-sv-{0}', variables('u'))]",
+            "createOption": "FromImage",
+            "diskSizeGB": 64,
+            "managedDisk": {
+              "storageAccountType": "Premium_LRS"
+            },
+            "deleteOption": "Delete"
+          }
+        },
+        "osProfile": {
+          "computerName": "[variables('vmName')]",
+          "adminUsername": "replicaadmin",
+          "customData": "[base64(variables('cloudInit'))]",
+          "linuxConfiguration": {
+            "disablePasswordAuthentication": true,
+            "ssh": {
+              "publicKeys": [
+                {
+                  "path": "/home/replicaadmin/.ssh/authorized_keys",
+                  "keyData": "[parameters('adminPublicKey')]"
+                }
+              ]
+            }
+          }
+        },
+        "networkProfile": {
+          "networkInterfaces": [
+            {
+              "id": "[resourceId('Microsoft.Network/networkInterfaces', format('nic-sv-{0}', variables('u')))]",
+              "properties": {
+                "deleteOption": "Delete"
+              }
+            }
+          ]
+        },
+        "diagnosticsProfile": {
+          "bootDiagnostics": {
+            "enabled": true
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/networkInterfaces', format('nic-sv-{0}', variables('u')))]"
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2023-07-01",
+      "name": "[variables('vaultName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "tenantId": "[subscription().tenantId]",
+        "sku": {
+          "family": "A",
+          "name": "standard"
+        },
+        "enableRbacAuthorization": true,
+        "enableSoftDelete": true,
+        "softDeleteRetentionInDays": 7
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[variables('storageName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "minimumTlsVersion": "TLS1_2",
+        "allowBlobPublicAccess": false,
+        "allowSharedKeyAccess": false,
+        "supportsHttpsTrafficOnly": true
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}', variables('storageName'), 'default')]",
+      "properties": {
+        "isVersioningEnabled": true,
+        "deleteRetentionPolicy": {
+          "enabled": true,
+          "days": 7
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+      ]
+    },
+    {
+      "copy": {
+        "name": "containers",
+        "count": "[length(createArray('ledger', 'ops', 'sellos', 'informes'))]"
+      },
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', createArray('ledger', 'ops', 'sellos', 'informes')[copyIndex()])]",
+      "properties": {
+        "publicAccess": "None"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers/immutabilityPolicies",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}/{3}', variables('storageName'), 'default', createArray('ledger', 'ops', 'sellos', 'informes')[0], 'default')]",
+      "properties": {
+        "immutabilityPeriodSinceCreationInDays": "[parameters('ledgerRetentionDays')]",
+        "allowProtectedAppendWrites": true
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', createArray('ledger', 'ops', 'sellos', 'informes')[0])]"
+      ]
+    },
+    {
+      "type": "Microsoft.OperationalInsights/workspaces",
+      "apiVersion": "2023-09-01",
+      "name": "[format('log-sv-{0}', variables('u'))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "sku": {
+          "name": "PerGB2018"
+        },
+        "retentionInDays": 30
+      }
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2024-10-01",
+      "name": "[variables('aiName')]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "kind": "AIServices",
+      "sku": {
+        "name": "S0"
+      },
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "customSubDomainName": "[variables('aiName')]",
+        "publicNetworkAccess": "Enabled",
+        "disableLocalAuth": true
+      }
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2024-10-01",
+      "name": "[format('{0}/{1}', variables('aiName'), 'replica-veto')]",
+      "sku": {
+        "name": "GlobalStandard",
+        "capacity": "[parameters('modelCapacity')]"
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "gpt-6-sol",
+          "version": "2026-09-22"
+        },
+        "versionUpgradeOption": "NoAutoUpgrade",
+        "raiPolicyName": "Microsoft.DefaultV2"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('aiName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2024-10-01",
+      "name": "[format('{0}/{1}', variables('aiName'), 'replica-second')]",
+      "sku": {
+        "name": "GlobalStandard",
+        "capacity": "[parameters('modelCapacity')]"
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI-OSS",
+          "name": "gpt-oss-120b",
+          "version": "1"
+        },
+        "versionUpgradeOption": "NoAutoUpgrade",
+        "raiPolicyName": "Microsoft.DefaultV2"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('aiName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('aiName'), 'replica-veto')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.KeyVault/vaults/{0}', variables('vaultName'))]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults', variables('vaultName')), resourceId('Microsoft.Compute/virtualMachines', variables('vmName')), variables('roles').vaultUser)]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('roles').vaultUser)]",
+        "principalId": "[reference(resourceId('Microsoft.Compute/virtualMachines', variables('vmName')), '2024-07-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('vaultName'))]",
+        "[resourceId('Microsoft.Compute/virtualMachines', variables('vmName'))]"
+      ]
+    },
+    {
+      "copy": {
+        "name": "blobRoles",
+        "count": "[length(createArray(0, 1, 2, 3))]"
+      },
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.Storage/storageAccounts/{0}/blobServices/{1}/containers/{2}', variables('storageName'), 'default', createArray('ledger', 'ops', 'sellos', 'informes')[createArray(0, 1, 2, 3)[copyIndex()]])]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', createArray('ledger', 'ops', 'sellos', 'informes')[createArray(0, 1, 2, 3)[copyIndex()]]), resourceId('Microsoft.Compute/virtualMachines', variables('vmName')), variables('roles').blobContributor)]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('roles').blobContributor)]",
+        "principalId": "[reference(resourceId('Microsoft.Compute/virtualMachines', variables('vmName')), '2024-07-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', createArray('ledger', 'ops', 'sellos', 'informes')[createArray(0, 1, 2, 3)[copyIndex()]])]",
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', createArray('ledger', 'ops', 'sellos', 'informes')[createArray(0, 1, 2, 3)[copyIndex()]])]",
+        "[resourceId('Microsoft.Compute/virtualMachines', variables('vmName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.CognitiveServices/accounts/{0}', variables('aiName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', variables('aiName')), resourceId('Microsoft.Compute/virtualMachines', variables('vmName')), variables('roles').openAiUser)]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('roles').openAiUser)]",
+        "principalId": "[reference(resourceId('Microsoft.Compute/virtualMachines', variables('vmName')), '2024-07-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('aiName'))]",
+        "[resourceId('Microsoft.Compute/virtualMachines', variables('vmName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Insights/actionGroups",
+      "apiVersion": "2023-01-01",
+      "name": "[format('ag-sv-{0}', variables('u'))]",
+      "location": "global",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "groupShortName": "svreplica",
+        "enabled": true,
+        "emailReceivers": [
+          {
+            "name": "mail",
+            "emailAddress": "[parameters('alertEmail')]",
+            "useCommonAlertSchema": true
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.Insights/metricAlerts",
+      "apiVersion": "2018-03-01",
+      "name": "[format('vm-unavailable-sv-{0}', variables('u'))]",
+      "location": "global",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "severity": 1,
+        "enabled": true,
+        "scopes": [
+          "[resourceId('Microsoft.Compute/virtualMachines', variables('vmName'))]"
+        ],
+        "evaluationFrequency": "PT5M",
+        "windowSize": "PT5M",
+        "criteria": {
+          "odata.type": "Microsoft.Azure.Monitor.SingleResourceMultipleMetricCriteria",
+          "allOf": [
+            {
+              "name": "availability",
+              "criterionType": "StaticThresholdCriterion",
+              "metricName": "VmAvailabilityMetric",
+              "metricNamespace": "Microsoft.Compute/virtualMachines",
+              "operator": "LessThan",
+              "threshold": 1,
+              "timeAggregation": "Average"
+            }
+          ]
+        },
+        "actions": [
+          {
+            "actionGroupId": "[resourceId('Microsoft.Insights/actionGroups', format('ag-sv-{0}', variables('u')))]"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Insights/actionGroups', format('ag-sv-{0}', variables('u')))]",
+        "[resourceId('Microsoft.Compute/virtualMachines', variables('vmName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "vmName": {
+      "type": "string",
+      "value": "[variables('vmName')]"
+    },
+    "vaultUri": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.KeyVault/vaults', variables('vaultName')), '2023-07-01').vaultUri]"
+    },
+    "aiEndpoint": {
+      "type": "string",
+      "value": "[format('https://{0}.openai.azure.com', variables('aiName'))]"
+    },
+    "storageBlob": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.blob]"
+    }
+  }
+}
