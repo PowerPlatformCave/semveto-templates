@@ -1,0 +1,66 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/0.1.2-preview/CreateUIDefinition.MultiVm.json#",
+  "handler": "Microsoft.Azure.CreateUIDef",
+  "version": "0.1.2-preview",
+  "parameters": {
+    "config": {
+      "basics": {
+        "description": "SEMVETO, version 0 of the replica: the infrastructure in a new resource group (VM without inbound rules, Key Vault, storage with the study's containers, Log Analytics, an AI Services account with the two models). Demo accounts only. Not investment advice.",
+        "resourceGroup": { "allowExisting": false }
+      }
+    },
+    "basics": [
+      {
+        "name": "alertEmail",
+        "type": "Microsoft.Common.TextBox",
+        "label": "E-mail for the alert when the VM is not available",
+        "constraints": { "required": true, "regex": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", "validationMessage": "An e-mail address." }
+      },
+      {
+        "name": "adminPublicKey",
+        "type": "Microsoft.Common.TextBox",
+        "label": "SSH public key of the VM's administrator (no inbound rule is opened)",
+        "multiLine": true,
+        "constraints": { "required": true, "regex": "^ssh-(rsa|ed25519) .+", "validationMessage": "An ssh-rsa or ssh-ed25519 public key." }
+      }
+    ],
+    "steps": [
+      {
+        "name": "sizing",
+        "label": "Sizes",
+        "elements": [
+          {
+            "name": "vmSize",
+            "type": "Microsoft.Compute.SizeSelector",
+            "label": "Size of the VM",
+            "recommendedSizes": ["Standard_D2as_v6"],
+            "osPlatform": "Linux"
+          },
+          {
+            "name": "modelCapacity",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Capacity of each model deployment (thousands of tokens per minute)",
+            "defaultValue": "50",
+            "constraints": { "required": true, "regex": "^[1-9][0-9]{0,3}$", "validationMessage": "1 to 9999." }
+          },
+          {
+            "name": "ledgerRetentionDays",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Retention of the ledger container, in days (created unlocked)",
+            "defaultValue": "1095",
+            "constraints": { "required": true, "regex": "^[1-9][0-9]{0,4}$", "validationMessage": "1 to 99999." }
+          }
+        ]
+      }
+    ],
+    "outputs": {
+      "location": "[location()]",
+      "environment": "replica",
+      "alertEmail": "[basics('alertEmail')]",
+      "adminPublicKey": "[basics('adminPublicKey')]",
+      "vmSize": "[steps('sizing').vmSize]",
+      "modelCapacity": "[int(steps('sizing').modelCapacity)]",
+      "ledgerRetentionDays": "[int(steps('sizing').ledgerRetentionDays)]"
+    }
+  }
+}
