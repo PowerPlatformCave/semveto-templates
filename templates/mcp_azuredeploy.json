@@ -1,0 +1,285 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.37.4.10188",
+      "templateHash": "5155869442689745043"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "defaultValue": "[resourceGroup().location]",
+      "metadata": {
+        "description": "Region of the resources (the group's by default)."
+      }
+    },
+    "environment": {
+      "type": "string",
+      "defaultValue": "replica",
+      "allowedValues": [
+        "replica"
+      ],
+      "metadata": {
+        "description": "Only \"replica\": this template never deploys production."
+      }
+    },
+    "domainName": {
+      "type": "string",
+      "metadata": {
+        "description": "A subdomain of your domain (for example s1.example.com; a neutral label): its public DNS zone is created here and the registrar delegates only that label. A whole domain also works."
+      }
+    },
+    "budgetUsd": {
+      "type": "int",
+      "defaultValue": 10,
+      "minValue": 1,
+      "metadata": {
+        "description": "Monthly budget of the group in USD, with alerts at 80 % and 100 % to the subscription's owners."
+      }
+    },
+    "budgetStart": {
+      "type": "string",
+      "metadata": {
+        "description": "First day of the budget: the first day of the current month, AAAA-MM-01."
+      }
+    }
+  },
+  "variables": {
+    "u": "[uniqueString(resourceGroup().id)]",
+    "tags": {
+      "workload": "semveto-mcp",
+      "environment": "[parameters('environment')]"
+    },
+    "blobContributor": "ba92f5b4-2d11-453d-a403-e96b0029c9fe"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Network/dnsZones",
+      "apiVersion": "2018-05-01",
+      "name": "[parameters('domainName')]",
+      "location": "global",
+      "tags": "[variables('tags')]",
+      "properties": {
+        "zoneType": "Public"
+      }
+    },
+    {
+      "type": "Microsoft.Network/dnsZones/TXT",
+      "apiVersion": "2018-05-01",
+      "name": "[format('{0}/{1}', parameters('domainName'), '@')]",
+      "properties": {
+        "TTL": 3600,
+        "TXTRecords": [
+          {
+            "value": [
+              "v=spf1 -all"
+            ]
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/dnsZones', parameters('domainName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/dnsZones/TXT",
+      "apiVersion": "2018-05-01",
+      "name": "[format('{0}/{1}', parameters('domainName'), '_dmarc')]",
+      "properties": {
+        "TTL": 3600,
+        "TXTRecords": [
+          {
+            "value": [
+              "v=DMARC1; p=reject"
+            ]
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/dnsZones', parameters('domainName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Network/dnsZones/CAA",
+      "apiVersion": "2018-05-01",
+      "name": "[format('{0}/{1}', parameters('domainName'), '@')]",
+      "properties": {
+        "TTL": 3600,
+        "caaRecords": [
+          {
+            "flags": 0,
+            "tag": "issue",
+            "value": "digicert.com"
+          },
+          {
+            "flags": 0,
+            "tag": "issuewild",
+            "value": ";"
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/dnsZones', parameters('domainName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+      "apiVersion": "2023-01-31",
+      "name": "[format('id-mcp-{0}-{1}', parameters('environment'), take(variables('u'), 6))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]"
+    },
+    {
+      "type": "Microsoft.ContainerRegistry/registries",
+      "apiVersion": "2023-07-01",
+      "name": "[format('crmcp{0}', take(variables('u'), 12))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "Basic"
+      },
+      "properties": {
+        "adminUserEnabled": false
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[format('stmcp{0}', take(variables('u'), 12))]",
+      "location": "[parameters('location')]",
+      "tags": "[variables('tags')]",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "minimumTlsVersion": "TLS1_2",
+        "allowBlobPublicAccess": false,
+        "allowSharedKeyAccess": false,
+        "supportsHttpsTrafficOnly": true,
+        "defaultToOAuthAuthentication": true
+      }
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}', format('stmcp{0}', take(variables('u'), 12)), 'default')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', format('stmcp{0}', take(variables('u'), 12)))]"
+      ]
+    },
+    {
+      "copy": {
+        "name": "containers",
+        "count": "[length(createArray('cache', 'consultas', 'control'))]"
+      },
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', format('stmcp{0}', take(variables('u'), 12)), 'default', createArray('cache', 'consultas', 'control')[copyIndex()])]",
+      "properties": {
+        "publicAccess": "None"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', format('stmcp{0}', take(variables('u'), 12)), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/managementPolicies",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}', format('stmcp{0}', take(variables('u'), 12)), 'default')]",
+      "properties": {
+        "policy": {
+          "rules": [
+            {
+              "name": "consultas-un-ano",
+              "enabled": true,
+              "type": "Lifecycle",
+              "definition": {
+                "filters": {
+                  "blobTypes": [
+                    "appendBlob",
+                    "blockBlob"
+                  ],
+                  "prefixMatch": [
+                    "consultas/"
+                  ]
+                },
+                "actions": {
+                  "baseBlob": {
+                    "delete": {
+                      "daysAfterCreationGreaterThan": 365
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', format('stmcp{0}', take(variables('u'), 12)))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[format('Microsoft.Storage/storageAccounts/{0}', format('stmcp{0}', take(variables('u'), 12)))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', format('stmcp{0}', take(variables('u'), 12))), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('id-mcp-{0}-{1}', parameters('environment'), take(variables('u'), 6))), variables('blobContributor'))]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('blobContributor'))]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('id-mcp-{0}-{1}', parameters('environment'), take(variables('u'), 6))), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('id-mcp-{0}-{1}', parameters('environment'), take(variables('u'), 6)))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', format('stmcp{0}', take(variables('u'), 12)))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Consumption/budgets",
+      "apiVersion": "2023-11-01",
+      "name": "[format('budget-mcp-{0}-{1}', parameters('environment'), take(variables('u'), 6))]",
+      "properties": {
+        "category": "Cost",
+        "amount": "[parameters('budgetUsd')]",
+        "timeGrain": "Monthly",
+        "timePeriod": {
+          "startDate": "[parameters('budgetStart')]"
+        },
+        "notifications": {
+          "actual80": {
+            "enabled": true,
+            "operator": "GreaterThanOrEqualTo",
+            "threshold": 80,
+            "contactEmails": [],
+            "contactRoles": [
+              "Owner"
+            ]
+          },
+          "actual100": {
+            "enabled": true,
+            "operator": "GreaterThanOrEqualTo",
+            "threshold": 100,
+            "contactEmails": [],
+            "contactRoles": [
+              "Owner"
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "nameServers": {
+      "type": "array",
+      "value": "[reference(resourceId('Microsoft.Network/dnsZones', parameters('domainName')), '2018-05-01').nameServers]"
+    },
+    "registry": {
+      "type": "string",
+      "value": "[format('crmcp{0}', take(variables('u'), 12))]"
+    }
+  }
+}

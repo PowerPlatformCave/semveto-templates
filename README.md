@@ -8,7 +8,7 @@ Este repositorio es público y contiene **solo** lo que un tercero necesita para
 
 | Ruta | Qué es |
 |---|---|
-| `templates/` | La plantilla del botón (`azuredeploy.json`) y su formulario (`createUiDefinition.json`). |
+| `templates/` | La plantilla del botón de la réplica (`azuredeploy.json`) y su formulario (`createUiDefinition.json`), y la del canal de consulta con IA (`mcp_azuredeploy.json`). |
 | `GUIA_DESPLIEGUE.md` | Qué crea el botón, cómo desplegarlo y cómo quitarlo todo. |
 | `tools/semveto_verify.py` | El verificador de los sellos diarios. Solo usa la biblioteca estándar de Python. |
 | `GUIA_VERIFICACION.md` | Cómo comprobar un sello diario frente a una copia del registro. |
@@ -41,6 +41,25 @@ El código del motor, las cuentas demo y el arranque de los servicios llegarán 
 - `environment` solo admite `replica`;
 - sus avisos van al correo del formulario;
 - cada versión se prueba en un grupo vacío y se desmonta entera antes de publicarse.
+
+## El canal de consulta con IA (servidor MCP de solo lectura)
+
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FPowerPlatformCave%2Fsemveto-templates%2Fmain%2Ftemplates%2Fmcp_azuredeploy.json)
+
+El estudio se consulta desde Claude, también en el móvil, con un servidor MCP **de solo lectura**:
+- lee las copias del registro y los informes con una identidad sin permisos de escritura;
+- no calcula ningún contraste;
+- anota cada consulta;
+- queda fuera de las versiones selladas.
+
+**Versión 0 del botón: solo la infraestructura,** en un grupo de recursos nuevo de quien despliega:
+- la zona DNS pública de un subdominio suyo (solo ese subdominio se delega en Azure), con SPF, DMARC y una CAA que solo admite a DigiCert;
+- una identidad administrada;
+- un registro de imágenes privado;
+- el almacenamiento propio del servidor (caché, registro de consultas e interruptor), sin claves compartidas ni acceso público;
+- un presupuesto con avisos.
+
+La imagen del servidor lleva el código del motor, que es privado: la aplicación, Entra ID y los permisos de lectura no están en esta versión. Pasos y desmontaje: [`GUIA_DESPLIEGUE.md`](GUIA_DESPLIEGUE.md#el-canal-de-consulta-con-ia).
 
 ## Revisión automática
 
